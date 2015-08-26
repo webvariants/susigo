@@ -21,6 +21,14 @@ type Susi struct {
     processors map[string]map[int64]Callback
 }
 
+type Event struct {
+    Topic     string              `json:"topic"`
+    Payload   interface{}         `json:"payload"`
+    Headers   []map[string]string `json:"headers"`
+    Id        string              `json:"id"`
+    SessionId string              `json:"sessionid"`
+}
+
 func NewSusi(addr, certFile, keyFile string) (*Susi, error) {
     susi := new(Susi)
     cert, err := tls.LoadX509KeyPair(certFile, keyFile)
@@ -44,15 +52,12 @@ func NewSusi(addr, certFile, keyFile string) (*Susi, error) {
     return susi, nil
 }
 
-func (susi *Susi) Publish(topic string, payload interface{}, callback Callback) error {
+func (susi *Susi) Publish(event Event, callback Callback) error {
     id := strconv.FormatInt(time.Now().UnixNano(), 10)
+    event.Id = id
     packet := map[string]interface{}{
         "type": "publish",
-        "data": map[string]interface{}{
-            "topic":   topic,
-            "payload": payload,
-            "id":      id,
-        },
+        "data": event,
     }
     susi.callbacks[id] = callback
     return susi.encoder.Encode(packet)
