@@ -6,19 +6,21 @@ import (
     "errors"
     "log"
     "net"
+    "regexp"
     "strconv"
     "time"
 )
 
-type Callback func(map[string]interface{})
+type Callback func(*Event)
 
 type Susi struct {
-    conn       net.Conn
-    encoder    *json.Encoder
-    decoder    *json.Decoder
-    callbacks  map[string]Callback
-    consumers  map[string]map[int64]Callback
-    processors map[string]map[int64]Callback
+    conn             net.Conn
+    encoder          *json.Encoder
+    decoder          *json.Decoder
+    callbacks        map[string]Callback
+    consumers        map[string]map[int64]Callback
+    processors       map[string]map[int64]Callback
+    publishProcesses map[string][]Callback
 }
 
 type Event struct {
@@ -27,6 +29,11 @@ type Event struct {
     Headers   []map[string]string `json:"headers"`
     Id        string              `json:"id"`
     SessionId string              `json:"sessionid"`
+}
+
+type Message struct {
+    Type string `json:"type"`
+    Data *Event `json:"data"`
 }
 
 func NewSusi(addr, certFile, keyFile string) (*Susi, error) {
@@ -46,6 +53,7 @@ func NewSusi(addr, certFile, keyFile string) (*Susi, error) {
     susi.callbacks = make(map[string]Callback)
     susi.consumers = make(map[string]map[int64]Callback)
     susi.processors = make(map[string]map[int64]Callback)
+    susi.publishProcesses = make(map[string][]Callback)
     susi.encoder = json.NewEncoder(susi.conn)
     susi.decoder = json.NewDecoder(susi.conn)
     go susi.backend()
@@ -142,45 +150,83 @@ func (susi *Susi) UnregisterProcessor(id int64) error {
 }
 
 func (susi *Susi) backend() {
-    packet := make(map[string]interface{})
+    packet := Message{}
     for {
         err := susi.decoder.Decode(&packet)
         if err != nil {
             log.Println("Error reading from susi json decoder: ", err)
             continue
         }
-        switch packet["type"] {
+        switch packet.Type {
         case "ack":
             {
-                event := packet["data"].(map[string]interface{})
-                id := event["id"].(string)
+                event := packet.Data
+                id := event.Id
                 callback := susi.callbacks[id]
                 callback(event)
                 delete(susi.callbacks, id)
             }
         case "consumerEvent":
             {
-                event := packet["data"].(map[string]interface{})
-                topic := event["topic"].(string)
-                consumers := susi.consumers[topic]
-                for _, consumer := range consumers {
+                event := packet.Data
+                topic := event.Topic
+                matchingConsumers := make([]Callback, 0)
+                for pattern, consumers := range susi.consumers {
+                    if matched, err := regexp.MatchString(pattern, topic); err == nil && matched {
+                        for _, consumer := range consumers {
+                            matchingConsumers = append(matchingConsumers, consumer)
+                        }
+                    }
+                }
+                for _, consumer := range matchingConsumers {
                     consumer(event)
                 }
             }
         case "processorEvent":
             {
-                event := packet["data"].(map[string]interface{})
-                topic := event["topic"].(string)
-                processors := susi.processors[topic]
-                for _, processor := range processors {
-                    processor(event)
+                event := packet.Data
+                topic := event.Topic
+                matchingProcessors := make([]Callback, 0)
+                for pattern, processors := range susi.processors {
+                    if matched, err := regexp.MatchString(pattern, topic); err == nil && matched {
+                        for _, processor := range processors {
+                            matchingProcessors = append(matchingProcessors, processor)
+                        }
+                    }
                 }
-                packet["type"] = "ack"
-                packet["data"] = event
-                if err = susi.encoder.Encode(packet); err != nil {
-                    log.Println("can not ack event back to susi: ", err)
-                }
+                susi.publishProcesses[event.Id] = matchingProcessors
+                susi.Ack(event)
             }
         }
     }
+}
+
+func (susi *Susi) Ack(event *Event) error {
+    if process, ok := susi.publishProcesses[event.Id]; ok {
+        if len(process) == 0 {
+            packet := map[string]interface{}{
+                "type": "ack",
+                "data": event,
+            }
+            delete(susi.publishProcesses, event.Id)
+            return susi.encoder.Encode(packet)
+        }
+        cb := process[0]
+        process = process[1:]
+        cb(event)
+        return nil
+    }
+    return errors.New("no publish process found")
+}
+
+func (susi *Susi) Dismiss(event *Event) error {
+    if _, ok := susi.publishProcesses[event.Id]; ok {
+        packet := map[string]interface{}{
+            "type": "dismiss",
+            "data": event,
+        }
+        delete(susi.publishProcesses, event.Id)
+        return susi.encoder.Encode(packet)
+    }
+    return errors.New("no publish process found")
 }
