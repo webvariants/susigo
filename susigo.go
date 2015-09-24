@@ -61,8 +61,11 @@ func NewSusi(addr, certFile, keyFile string) (*Susi, error) {
 }
 
 func (susi *Susi) Publish(event Event, callback Callback) error {
-	id := strconv.FormatInt(time.Now().UnixNano(), 10)
-	event.Id = id
+	var id = event.Id
+	if event.Id == "" {
+		id = strconv.FormatInt(time.Now().UnixNano(), 10)
+		event.Id = id
+	}
 	packet := map[string]interface{}{
 		"type": "publish",
 		"data": event,
