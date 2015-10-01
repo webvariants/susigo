@@ -14,6 +14,9 @@ import (
 type Callback func(*Event)
 
 type Susi struct {
+	cert             tls.Certificate
+	addr             string
+	connected        bool
 	conn             net.Conn
 	encoder          *json.Encoder
 	decoder          *json.Decoder
@@ -27,8 +30,8 @@ type Event struct {
 	Topic     string              `json:"topic"`
 	Payload   interface{}         `json:"payload"`
 	Headers   []map[string]string `json:"headers"`
-	Id        string              `json:"id"`
-	SessionId string              `json:"sessionid"`
+	ID        string              `json:"id"`
+	SessionID string              `json:"sessionid"`
 }
 
 type Message struct {
@@ -42,30 +45,20 @@ func NewSusi(addr, certFile, keyFile string) (*Susi, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := tls.Dial("tcp", addr, &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-	susi.conn = conn
+	susi.cert = cert
 	susi.callbacks = make(map[string]Callback)
+	susi.addr = addr
 	susi.consumers = make(map[string]map[int64]Callback)
 	susi.processors = make(map[string]map[int64]Callback)
 	susi.publishProcesses = make(map[string][]Callback)
-	susi.encoder = json.NewEncoder(susi.conn)
-	susi.decoder = json.NewDecoder(susi.conn)
+	susi.connected = false
 	go susi.backend()
 	return susi, nil
 }
 
 func (susi *Susi) Publish(event Event, callback Callback) error {
-	var id = event.Id
-	if event.Id == "" {
-		id = strconv.FormatInt(time.Now().UnixNano(), 10)
-		event.Id = id
-	}
+	id := strconv.FormatInt(time.Now().UnixNano(), 10)
+	event.ID = id
 	packet := map[string]interface{}{
 		"type": "publish",
 		"data": event,
@@ -124,9 +117,8 @@ func (susi *Susi) UnregisterConsumer(id int64) error {
 					},
 				}
 				return susi.encoder.Encode(packet)
-			} else {
-				return nil
 			}
+			return nil
 		}
 	}
 	return errors.New("no such consumer")
@@ -144,27 +136,68 @@ func (susi *Susi) UnregisterProcessor(id int64) error {
 					},
 				}
 				return susi.encoder.Encode(packet)
-			} else {
-				return nil
 			}
+			return nil
 		}
 	}
 	return errors.New("no such processor")
 }
 
+func (susi *Susi) connect() error {
+	conn, err := tls.Dial("tcp", susi.addr, &tls.Config{
+		Certificates:       []tls.Certificate{susi.cert},
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		log.Printf("failed connecting susi-core (%v), retry...", err)
+		return err
+	}
+	susi.conn = conn
+	susi.connected = true
+	susi.encoder = json.NewEncoder(susi.conn)
+	susi.decoder = json.NewDecoder(susi.conn)
+	for consumerTopic := range susi.consumers {
+		packet := map[string]interface{}{
+			"type": "registerConsumer",
+			"data": map[string]interface{}{
+				"topic": consumerTopic,
+			},
+		}
+		susi.encoder.Encode(packet)
+	}
+	for processorTopic := range susi.processors {
+		packet := map[string]interface{}{
+			"type": "registerConsumer",
+			"data": map[string]interface{}{
+				"topic": processorTopic,
+			},
+		}
+		susi.encoder.Encode(packet)
+	}
+	return nil
+}
+
 func (susi *Susi) backend() {
+	packet := Message{}
 	for {
-		packet := Message{}
+		if !susi.connected {
+			err := susi.connect()
+			if err != nil {
+				time.Sleep(1 * time.Second)
+				continue
+			}
+		}
 		err := susi.decoder.Decode(&packet)
 		if err != nil {
 			log.Println("Error reading from susi json decoder: ", err)
+			susi.connected = false
 			continue
 		}
 		switch packet.Type {
 		case "ack":
 			{
 				event := packet.Data
-				id := event.Id
+				id := event.ID
 				callback := susi.callbacks[id]
 				callback(event)
 				delete(susi.callbacks, id)
@@ -173,7 +206,7 @@ func (susi *Susi) backend() {
 			{
 				event := packet.Data
 				topic := event.Topic
-				matchingConsumers := make([]Callback, 0)
+				var matchingConsumers []Callback
 				for pattern, consumers := range susi.consumers {
 					if matched, err := regexp.MatchString(pattern, topic); err == nil && matched {
 						for _, consumer := range consumers {
@@ -189,7 +222,7 @@ func (susi *Susi) backend() {
 			{
 				event := packet.Data
 				topic := event.Topic
-				matchingProcessors := make([]Callback, 0)
+				var matchingProcessors []Callback
 				for pattern, processors := range susi.processors {
 					if matched, err := regexp.MatchString(pattern, topic); err == nil && matched {
 						for _, processor := range processors {
@@ -197,7 +230,7 @@ func (susi *Susi) backend() {
 						}
 					}
 				}
-				susi.publishProcesses[event.Id] = matchingProcessors
+				susi.publishProcesses[event.ID] = matchingProcessors
 				susi.Ack(event)
 			}
 		}
@@ -205,13 +238,13 @@ func (susi *Susi) backend() {
 }
 
 func (susi *Susi) Ack(event *Event) error {
-	if process, ok := susi.publishProcesses[event.Id]; ok {
+	if process, ok := susi.publishProcesses[event.ID]; ok {
 		if len(process) == 0 {
 			packet := map[string]interface{}{
 				"type": "ack",
 				"data": event,
 			}
-			delete(susi.publishProcesses, event.Id)
+			delete(susi.publishProcesses, event.ID)
 			return susi.encoder.Encode(packet)
 		}
 		cb := process[0]
@@ -223,12 +256,12 @@ func (susi *Susi) Ack(event *Event) error {
 }
 
 func (susi *Susi) Dismiss(event *Event) error {
-	if _, ok := susi.publishProcesses[event.Id]; ok {
+	if _, ok := susi.publishProcesses[event.ID]; ok {
 		packet := map[string]interface{}{
 			"type": "dismiss",
 			"data": event,
 		}
-		delete(susi.publishProcesses, event.Id)
+		delete(susi.publishProcesses, event.ID)
 		return susi.encoder.Encode(packet)
 	}
 	return errors.New("no publish process found")
