@@ -271,6 +271,7 @@ func (susi *Susi) Ack(event *Event) error {
 		}
 		cb := process[0]
 		process = process[1:]
+		susi.publishProcesses[event.ID] = process
 		cb(event)
 		return nil
 	}
