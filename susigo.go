@@ -57,6 +57,9 @@ func NewSusi(addr, certFile, keyFile string) (*Susi, error) {
 }
 
 func (susi *Susi) Publish(event Event, callback Callback) error {
+	if !susi.connected {
+		return errors.New("susi not connected")
+	}
 	var id = event.ID
 	if event.ID == "" {
 		id = strconv.FormatInt(time.Now().UnixNano(), 10)
@@ -85,7 +88,10 @@ func (susi *Susi) RegisterConsumer(topic string, callback Callback) (int64, erro
 				"topic": topic,
 			},
 		}
-		return id, susi.encoder.Encode(packet)
+		if susi.connected {
+			return id, susi.encoder.Encode(packet)
+		}
+		return id, nil
 	}
 	return -1, nil
 }
@@ -104,7 +110,10 @@ func (susi *Susi) RegisterProcessor(topic string, callback Callback) (int64, err
 				"topic": topic,
 			},
 		}
-		return id, susi.encoder.Encode(packet)
+		if susi.connected {
+			return id, susi.encoder.Encode(packet)
+		}
+		return id, nil
 	}
 	return -1, nil
 }
@@ -120,7 +129,10 @@ func (susi *Susi) UnregisterConsumer(id int64) error {
 						"topic": topic,
 					},
 				}
-				return susi.encoder.Encode(packet)
+				if susi.connected {
+					return susi.encoder.Encode(packet)
+				}
+				return nil
 			}
 			return nil
 		}
@@ -139,7 +151,10 @@ func (susi *Susi) UnregisterProcessor(id int64) error {
 						"topic": topic,
 					},
 				}
-				return susi.encoder.Encode(packet)
+				if susi.connected {
+					return susi.encoder.Encode(packet)
+				}
+				return nil
 			}
 			return nil
 		}
@@ -249,7 +264,10 @@ func (susi *Susi) Ack(event *Event) error {
 				"data": event,
 			}
 			delete(susi.publishProcesses, event.ID)
-			return susi.encoder.Encode(packet)
+			if susi.connected {
+				return susi.encoder.Encode(packet)
+			}
+			return nil
 		}
 		cb := process[0]
 		process = process[1:]
@@ -266,7 +284,10 @@ func (susi *Susi) Dismiss(event *Event) error {
 			"data": event,
 		}
 		delete(susi.publishProcesses, event.ID)
-		return susi.encoder.Encode(packet)
+		if susi.connected {
+			return susi.encoder.Encode(packet)
+		}
+		return nil
 	}
 	return errors.New("no publish process found")
 }
