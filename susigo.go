@@ -186,7 +186,7 @@ func (susi *Susi) connect() error {
 	}
 	for processorTopic := range susi.processors {
 		packet := map[string]interface{}{
-			"type": "registerConsumer",
+			"type": "registerProcessor",
 			"data": map[string]interface{}{
 				"topic": processorTopic,
 			},
