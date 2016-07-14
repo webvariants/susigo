@@ -218,7 +218,9 @@ func (susi *Susi) backend() {
 				event := packet.Data
 				id := event.ID
 				callback := susi.callbacks[id]
-				callback(event)
+				if callback != nil {
+					callback(event)
+				}
 				delete(susi.callbacks, id)
 			}
 		case "consumerEvent":
