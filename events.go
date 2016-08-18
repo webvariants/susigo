@@ -30,6 +30,11 @@ func (event *Event) Ack() {
 	event.susi.Ack(event)
 }
 
+// Publish send a acknoledge for the event
+func (event *Event) Publish(cb func(*Event)) error {
+	return event.susi.Publish(*event, cb)
+}
+
 // Dismiss a event
 func (event *Event) Dismiss() {
 	event.AddHeader("Event-Control", "No-Processor")

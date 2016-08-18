@@ -19,6 +19,7 @@ type Susi struct {
 	cert             tls.Certificate
 	addr             string
 	connected        bool
+	connectedChan    chan bool
 	conn             net.Conn
 	encoder          *json.Encoder
 	decoder          *json.Decoder
@@ -48,8 +49,15 @@ func NewSusi(addr, certFile, keyFile string) (*Susi, error) {
 	susi.processors = make(map[string]map[int64]Callback)
 	susi.publishProcesses = make(map[string][]Callback)
 	susi.connected = false
+	susi.connectedChan = make(chan bool)
 	go susi.backend()
 	return susi, nil
+}
+
+// Wait waits until susi is connected
+func (susi *Susi) Wait() {
+	<-susi.connectedChan
+	return
 }
 
 // CreateEvent returns a new event structure with susi reference
@@ -73,6 +81,7 @@ func (susi *Susi) connect() error {
 	}
 	susi.conn = conn
 	susi.connected = true
+	susi.connectedChan <- true
 	susi.encoder = json.NewEncoder(susi.conn)
 	susi.decoder = json.NewDecoder(susi.conn)
 	for consumerTopic := range susi.consumers {
@@ -103,6 +112,7 @@ func (susi *Susi) backend() {
 		if !susi.connected {
 			err := susi.connect()
 			if err != nil {
+				log.Print(err)
 				time.Sleep(1 * time.Second)
 				continue
 			}
