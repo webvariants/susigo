@@ -135,6 +135,7 @@ func (susi *Susi) backend() {
 		case "consumerEvent":
 			{
 				event := packet.Data
+				event.susi = susi
 				topic := event.Topic
 				var matchingConsumers []Callback
 				for pattern, consumers := range susi.consumers {
@@ -151,6 +152,7 @@ func (susi *Susi) backend() {
 		case "processorEvent":
 			{
 				event := packet.Data
+				event.susi = susi
 				topic := event.Topic
 				var matchingProcessors []Callback
 				for pattern, processors := range susi.processors {
