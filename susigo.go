@@ -80,10 +80,10 @@ func (susi *Susi) connect() error {
 		return err
 	}
 	susi.conn = conn
-	susi.connected = true
-	susi.connectedChan <- true
 	susi.encoder = json.NewEncoder(susi.conn)
 	susi.decoder = json.NewDecoder(susi.conn)
+	susi.connected = true
+	susi.connectedChan <- true
 	for consumerTopic := range susi.consumers {
 		packet := map[string]interface{}{
 			"type": "registerConsumer",
