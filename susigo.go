@@ -129,7 +129,7 @@ func (susi *Susi) backend() {
 				event := packet.Data
 				id := event.ID
 				callback := susi.callbacks[id]
-				callback(event)
+				go callback(event)
 				delete(susi.callbacks, id)
 			}
 		case "consumerEvent":
@@ -146,7 +146,7 @@ func (susi *Susi) backend() {
 					}
 				}
 				for _, consumer := range matchingConsumers {
-					consumer(event)
+					go consumer(event)
 				}
 			}
 		case "processorEvent":
