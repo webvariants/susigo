@@ -303,6 +303,7 @@ func (susi *Susi) Ack(event *Event) error {
 	return errors.New("no publish process found")
 }
 
+// @DEPECATED
 // Dismiss information for the client
 func (susi *Susi) Dismiss(event *Event) error {
 	if _, ok := susi.publishProcesses[event.ID]; ok {

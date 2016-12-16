@@ -26,8 +26,8 @@ func (event *Event) SetPayload(data interface{}) {
 }
 
 // Ack send a acknoledge for the event
-func (event *Event) Ack() {
-	event.susi.Ack(event)
+func (event *Event) Ack() error {
+	return event.susi.Ack(event)
 }
 
 // Publish send a acknoledge for the event
@@ -36,8 +36,9 @@ func (event *Event) Publish(cb func(*Event)) error {
 }
 
 // Dismiss a event
-func (event *Event) Dismiss() {
+func (event *Event) Dismiss(msg string) error {
+	event.AddHeader("Error", msg)
 	event.AddHeader("Event-Control", "No-Processor")
 	event.AddHeader("Event-Control", "No-Consumer")
-	event.susi.Ack(event)
+	return event.susi.Ack(event)
 }
